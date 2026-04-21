@@ -44,3 +44,13 @@ To run the application, ensure you have the following libraries installed: **str
 ```bash
 streamlit run main.py
 ```
+
+### or in local console
+```bash
+# First install 
+pip install streamlit pandas openpyxl
+python -m pip install plotly
+
+# To run it
+python -m streamlit run main.py
+```
