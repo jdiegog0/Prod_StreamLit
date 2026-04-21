@@ -298,6 +298,7 @@ if uploaded_file:
 
     if prepared is None:
         st.error(result)
+        st.info("Please change to the corresponding file for this analysis.") 
         st.stop()
 
     df     = prepared
