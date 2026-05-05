@@ -54,3 +54,8 @@ python -m pip install plotly
 # To run it
 python -m streamlit run main.py
 ```
+
+### StreamLit link
+```
+https://appapp-evlye6wjacvnkpqqpnpyfe.streamlit.app/
+```
