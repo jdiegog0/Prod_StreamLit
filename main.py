@@ -1,6 +1,9 @@
 """
 =============================================================
-  Galderma · Productivity Dashboard
+  Productivity Dashboard — Unified Model
+  Modelos:
+    · Galderma  → More is Best (Points)
+    · AMS       → Less is Best (Effort)
 =============================================================
 """
 
@@ -12,50 +15,134 @@ from pathlib import Path
 
 st.set_page_config(layout="wide", page_title="Productivity Analysis")
 
-# ─── WINDOW SIZES (idénticos al R) ──────────────────────────
+# ─── WINDOW SIZES ────────────────────────────────────────────
 CURRENT_SIZE  = 3
 BASELINE_SIZE = 3
 GAP_SIZE      = 3
-
-STATUS_VALIDOS = ["Ready to Deploy", "Closed"]
 
 COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 
+XAXIS_STYLE = dict(title="Period", tickformat="%b %Y", dtick="M1", tickangle=45)
+
 st.title("📊 Productivity Analysis")
 
 
 # ════════════════════════════════════════════════════════════
-#  CARGA DE DATOS
+#  DATA LOAD FOR GALDERMA MODEL (Points / More is Best)
 # ════════════════════════════════════════════════════════════
-@st.cache_data
-def load_data(source):
-    df = pd.read_excel(source)
-    df["Period"] = pd.to_datetime(df["Period"])
+def load_galderma(uploaded_file):
+
+    xls  = pd.ExcelFile(uploaded_file)
+    sname = "RawData" if "RawData" in xls.sheet_names else xls.sheet_names[0]
+    df   = pd.read_excel(uploaded_file, sheet_name=sname)
+    df.columns = df.columns.str.strip().str.replace(r"\s+", " ", regex=True)
+
     df["Points"] = pd.to_numeric(df["Points"], errors="coerce")
-    df = df[df["Status"].isin(STATUS_VALIDOS)].copy()
+    df["Period"] = pd.to_datetime(df["Period"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    df = df[df["Status"].isin(["Ready to Deploy", "Closed"])].copy()
     df["Grupo"] = "Grupo"
-    return df
+
+    # Split Developer por "/"
+    if "Developer" in df.columns:
+        df["Developer"] = df["Developer"].astype("string").str.strip()
+        df = df[df["Developer"].notna() & (df["Developer"] != "")].copy()
+        df = df.assign(Developer=df["Developer"].str.split("/")).explode("Developer")
+        df["Developer"] = df["Developer"].astype("string").str.strip()
+        df = df[
+            df["Developer"].notna()
+            & (df["Developer"] != "")
+            & (df["Developer"].str.lower() != "nan")
+        ].copy()
+
+    ## df = df[df["Period"].notna() & df["Points"].notna()].copy() ## Blank or NAN filter for Modelo Galderma
+    # ════════════════════════════════════════════════════════════
+    config = {
+        "metric_col":   "Points",
+        "more_is_best": True,
+        "dimensions":   [c for c in ["Developer", "QA Tester", "Grupo"] if c in df.columns],
+        "label_real":   "Real Points",
+        "label_exp":    "Expected Points",
+    }
+    return df, config
 
 
 # ════════════════════════════════════════════════════════════
-#  AGREGACIÓN MENSUAL  (réplica del db_agg de R)
+#  DATA LOAD FOR AMS MODEL (Effort / Less is Best)
+# ════════════════════════════════════════════════════════════
+def detect_columns(df: pd.DataFrame) -> dict:
+    
+    col_map = {
+        "Assigned To": None, "Group": None, "WBS": None,
+        "Category": None, "Service Type": None, "EndDate": None,
+        "Effort": None, "Points": None, "Developer": None,
+        "Status": None, "Period": None, "QA Tester": None,
+        "Issue Type": None, "Priority": None,
+    }
+    for col in df.columns:
+        c = col.lower().strip()
+        if   c in ["assigned to", "assignee", "resource", "is"]:  col_map["Assigned To"]  = col
+        elif c == "group":                                          col_map["Group"]        = col
+        elif c == "wbs":                                            col_map["WBS"]          = col
+        elif c == "category":                                       col_map["Category"]     = col
+        elif c in ["service type", "servicetype"]:                  col_map["Service Type"] = col
+        elif c in ["enddate", "end date"]:                         col_map["EndDate"]      = col
+        elif c == "effort":                                         col_map["Effort"]       = col
+        elif c == "points":                                         col_map["Points"]       = col
+        elif c == "developer":                                      col_map["Developer"]    = col
+        elif c == "status":                                         col_map["Status"]       = col
+        elif c == "period":                                         col_map["Period"]       = col
+        elif c in ["qa tester", "qatester"]:                       col_map["QA Tester"]    = col
+        elif c in ["issue type", "issuetype"]:                     col_map["Issue Type"]   = col
+        elif c == "priority":                                       col_map["Priority"]     = col
+    return col_map
+
+
+def load_ams(uploaded_file):
+   
+    xls   = pd.ExcelFile(uploaded_file)
+    sname = "RawData" if "RawData" in xls.sheet_names else xls.sheet_names[0]
+    df    = pd.read_excel(uploaded_file, sheet_name=sname)
+    df.columns = df.columns.str.strip().str.replace(r"\s+", " ", regex=True)
+
+    col_map = detect_columns(df)
+
+    required = ["Assigned To", "Group", "WBS", "EndDate", "Effort"]
+    missing  = [k for k in required if col_map[k] is None]
+    if missing:
+        return None, f"Missing required columns for AMS model: {missing}"
+
+    df = df.rename(columns={v: k for k, v in col_map.items() if v is not None}).copy()
+
+    df["EndDate"] = pd.to_datetime(df["EndDate"], errors="coerce")
+    df["Period"]  = df["EndDate"].dt.to_period("M").dt.to_timestamp()
+    df["Effort"]  = pd.to_numeric(df["Effort"], errors="coerce")
+    ## df = df[df["Period"].notna() & df["Effort"].notna()].copy()  ## Blank or NAN filter for AMS Model
+    # ════════════════════════════════════════════════════════════
+
+    config = {
+        "metric_col":   "Effort",
+        "more_is_best": False,
+        "dimensions":   [c for c in ["Assigned To", "Group", "WBS", "Category", "Service Type"]
+                         if c in df.columns],
+        "label_real":   "Real Effort",
+        "label_exp":    "Expected Effort",
+    }
+    return df, config
+
+
+# ════════════════════════════════════════════════════════════
+#  MONTHLY AGGREGATION
 # ════════════════════════════════════════════════════════════
 def aggregate_monthly(df: pd.DataFrame, dimension: str, metric_col: str) -> pd.DataFrame:
-    """
-    Mirrors R:
-        group_by(Period, var) %>%
-        summarise(n=n(), Sum=sum(Target), Mean=mean(Target))
-    """
+
     agg = (
         df.groupby(["Period", dimension], dropna=False)
-        .agg(
-            n   =(metric_col, "count"),
-            Sum =(metric_col, "sum"),
-            Mean=(metric_col, "mean"),
-        )
+        .agg(n=(metric_col, "size"), # Change from "count" to "size" to include the blank records
+             Sum=(metric_col, "sum"), 
+             Mean=(metric_col, "mean")) 
         .reset_index()
         .sort_values(["Period", dimension])
         .reset_index(drop=True)
@@ -64,20 +151,10 @@ def aggregate_monthly(df: pd.DataFrame, dimension: str, metric_col: str) -> pd.D
 
 
 # ════════════════════════════════════════════════════════════
-#  CORE: fx.PRODUCTIVITY.v3 
+#  PRODUCTIVITY CALCULATION
 # ════════════════════════════════════════════════════════════
-def fx_productivity_v3(
-    db_agg: pd.DataFrame,
-    dimension: str,
-    more_is_best: bool,
-    selected_values: list = None,
-) -> pd.DataFrame:
-    """
-    Ventanas Python (0-based) ↔ R (1-based):
-      current   [0 : CURRENT_SIZE]
-      baseline  [CURRENT+GAP : CURRENT+GAP+BASELINE]  (o fallback)
-    signo = +1 si more_is_best, -1 si no.
-    """
+def fx_productivity_v3(db_agg, dimension, more_is_best, selected_values=None):
+
     signo = 1 if more_is_best else -1
     if selected_values is not None:
         db_agg = db_agg[db_agg[dimension].isin(selected_values)].copy()
@@ -106,22 +183,22 @@ def fx_productivity_v3(
                 continue
 
             has_baseline_full = n >= (CURRENT_SIZE + GAP_SIZE + BASELINE_SIZE)
-            cur_start, cur_end = 0, CURRENT_SIZE
+            cur_s, cur_e = 0, CURRENT_SIZE
 
             if has_baseline_full:
-                base_start = CURRENT_SIZE + GAP_SIZE
-                base_end   = CURRENT_SIZE + GAP_SIZE + BASELINE_SIZE
+                bl_s = CURRENT_SIZE + GAP_SIZE
+                bl_e = CURRENT_SIZE + GAP_SIZE + BASELINE_SIZE
             else:
-                base_start = max(0, n - BASELINE_SIZE)
-                base_end   = n
+                bl_s = max(0, n - BASELINE_SIZE)
+                bl_e = n
 
-            current_window  = svc_data.iloc[cur_start:cur_end]
-            baseline_window = svc_data.iloc[base_start:base_end]
+            cw = svc_data.iloc[cur_s:cur_e]
+            bw = svc_data.iloc[bl_s:bl_e]
 
-            effort_data     = current_window["Sum"].sum()
-            units_data      = current_window["n"].sum()
-            effort_baseline = baseline_window["Sum"].sum()
-            units_baseline  = baseline_window["n"].sum()
+            effort_data     = cw["Sum"].sum()
+            units_data      = cw["n"].sum()
+            effort_baseline = bw["Sum"].sum()
+            units_baseline  = bw["n"].sum()
 
             if units_baseline == 0 or units_data == 0:
                 continue
@@ -148,10 +225,10 @@ def fx_productivity_v3(
 
 
 # ════════════════════════════════════════════════════════════
-#  MODOS DE ANÁLISIS
+#  PRODUCTIVITY CALCULATION #2
 # ════════════════════════════════════════════════════════════
 def calc_individual_productivity(db_agg, dimension, more_is_best, selected_values):
-    """R: Recursive mode — un cálculo independiente por valor."""
+    
     results = []
     for val in selected_values:
         res = fx_productivity_v3(db_agg, dimension, more_is_best, [val])
@@ -162,7 +239,7 @@ def calc_individual_productivity(db_agg, dimension, more_is_best, selected_value
 
 
 def calc_global_productivity(db_agg, dimension, more_is_best, selected_values):
-    """R: Single/Global mode — todos los valores combinados."""
+    
     res = fx_productivity_v3(db_agg, dimension, more_is_best, selected_values)
     if not res.empty:
         res[dimension] = "Group Total"
@@ -170,13 +247,9 @@ def calc_global_productivity(db_agg, dimension, more_is_best, selected_values):
 
 
 # ════════════════════════════════════════════════════════════
-#  GRÁFICAS 
+#  GRAFICS
 # ════════════════════════════════════════════════════════════
-XAXIS_STYLE = dict(title="Period", tickformat="%b %Y", dtick="M1", tickangle=45)
-
-
 def make_count_chart(db_agg, dimension, selected_values):
-    """p1: Count (n) por período con etiquetas en puntos."""
     fig = go.Figure()
     for i, val in enumerate(selected_values):
         sub = db_agg[db_agg[dimension] == str(val)].sort_values("Period")
@@ -193,16 +266,13 @@ def make_count_chart(db_agg, dimension, selected_values):
         ))
     fig.update_layout(
         title=f"{dimension} — Ticket Count Over Time",
-        xaxis=XAXIS_STYLE,
-        yaxis_title="Count (n)",
-        height=420,
-        hovermode="x unified",
+        xaxis=XAXIS_STYLE, yaxis_title="Count (n)",
+        height=420, hovermode="x unified",
     )
     return fig
 
 
 def make_mean_chart(db_agg, dimension, metric_col, selected_values):
-    """p2: Mean del metric por período con etiquetas en puntos."""
     fig = go.Figure()
     for i, val in enumerate(selected_values):
         sub = db_agg[db_agg[dimension] == str(val)].sort_values("Period")
@@ -219,21 +289,18 @@ def make_mean_chart(db_agg, dimension, metric_col, selected_values):
         ))
     fig.update_layout(
         title=f"{dimension} — Mean {metric_col} Over Time",
-        xaxis=XAXIS_STYLE,
-        yaxis_title=f"Mean {metric_col}",
-        height=420,
-        hovermode="x unified",
+        xaxis=XAXIS_STYLE, yaxis_title=f"Mean {metric_col}",
+        height=420, hovermode="x unified",
     )
     return fig
 
 
-def make_productivity_chart(prod_df, dimension):
-    """p3: Productivity (%) por período + línea cero de referencia."""
+def make_productivity_chart(prod_df, dimension, label_real, label_exp):
     fig = go.Figure()
-    values_in_df = prod_df[dimension].unique() if dimension in prod_df.columns else ["Group Total"]
-    for i, val in enumerate(values_in_df):
-        sub = (prod_df[prod_df[dimension] == str(val)] if dimension in prod_df.columns
-               else prod_df).sort_values("ActualPeriod")
+    vals = prod_df[dimension].unique() if dimension in prod_df.columns else ["Group Total"]
+    for i, val in enumerate(vals):
+        sub = (prod_df[prod_df[dimension] == str(val)]
+               if dimension in prod_df.columns else prod_df).sort_values("ActualPeriod")
         prod_pct = sub["Value"] * 100
         fig.add_trace(go.Scatter(
             x=sub["ActualPeriod"], y=prod_pct,
@@ -247,41 +314,33 @@ def make_productivity_chart(prod_df, dimension):
     fig.add_hline(y=0, line_dash="dash", line_color="black", line_width=1.5)
     fig.update_layout(
         title=f"Productivity Over Time by {dimension}",
-        xaxis=XAXIS_STYLE,
-        yaxis_title="Productivity (%)",
-        height=420,
-        hovermode="x unified",
+        xaxis=XAXIS_STYLE, yaxis_title="Productivity (%)",
+        height=420, hovermode="x unified",
     )
     return fig
 
 
-def make_velocity_chart(prod_df, dimension, metric_col):
-    """p4: Real vs Expected (línea sólida vs punteada) por período."""
+def make_velocity_chart(prod_df, dimension, metric_col, label_real, label_exp):
     fig = go.Figure()
-    values_in_df = prod_df[dimension].unique() if dimension in prod_df.columns else ["Group Total"]
-    styles = [
-        ("EffortData",     "Real",     "solid"),
-        ("BaseEfforEquiv", "Expected", "dash"),
-    ]
-    for i, val in enumerate(values_in_df):
-        sub = (prod_df[prod_df[dimension] == str(val)] if dimension in prod_df.columns
-               else prod_df).sort_values("ActualPeriod")
+    vals   = prod_df[dimension].unique() if dimension in prod_df.columns else ["Group Total"]
+    styles = [("EffortData", label_real, "solid"), ("BaseEfforEquiv", label_exp, "dash")]
+    for i, val in enumerate(vals):
+        sub = (prod_df[prod_df[dimension] == str(val)]
+               if dimension in prod_df.columns else prod_df).sort_values("ActualPeriod")
         base_color = COLORS[i % len(COLORS)]
-        for col, label, dash in styles:
+        for col, lbl, dash in styles:
             fig.add_trace(go.Scatter(
                 x=sub["ActualPeriod"], y=sub[col],
                 mode="lines+markers",
-                name=f"{val} — {label} {metric_col}",
+                name=f"{val} — {lbl}",
                 line=dict(color=base_color, width=2, dash=dash),
                 marker=dict(size=5),
             ))
     fig.add_hline(y=0, line_dash="dash", line_color="black", line_width=1.5)
     fig.update_layout(
-        title=f"Velocity: Real vs Expected {metric_col}",
-        xaxis=XAXIS_STYLE,
-        yaxis_title=metric_col,
-        height=420,
-        hovermode="x unified",
+        title=f"Velocity: {label_real} vs {label_exp}",
+        xaxis=XAXIS_STYLE, yaxis_title=metric_col,
+        height=420, hovermode="x unified",
     )
     return fig
 
@@ -289,34 +348,79 @@ def make_velocity_chart(prod_df, dimension, metric_col):
 # ════════════════════════════════════════════════════════════
 #  UI PRINCIPAL
 # ════════════════════════════════════════════════════════════
-uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"])
 
-DEFAULT_PATH = Path("Galderma_12-01-24_to_03-31-26.xlsx")
+
+st.sidebar.header("⚙️ Model")
+model_choice = st.sidebar.radio(
+    "Select productivity model",
+    ["🟢  Galderma · Points  (More is Best)", "🔵  AMS · Effort  (Less is Best)"],
+    help=(
+        "Galderma: Tracks story points delivered by developers.\n"
+        "AMS: Tracks effort (hours) consumed per ticket — lower is better."
+    ),
+)
+is_ams = model_choice.startswith("🔵")
+
+st.sidebar.markdown("---")
+st.sidebar.header("📂 Data")
+uploaded_file = st.file_uploader(
+    f"Upload {'AMS' if is_ams else 'Galderma'} Excel file (.xlsx)",
+    type=["xlsx"],
+)
+
+# ── Data Load ──────────────────────────────
+df, config = None, None
 
 if uploaded_file:
-    df = load_data(uploaded_file)
-elif DEFAULT_PATH.exists():
-    df = load_data(str(DEFAULT_PATH))
-    st.info(f"📄 Usando archivo local: {DEFAULT_PATH.name}  —  {len(df):,} filas tras filtro")
+    if is_ams:
+        result = load_ams(uploaded_file)
+        if result[0] is None:
+            st.error(result[1])
+            st.stop()
+        df, config = result
+    else:
+        df, config = load_galderma(uploaded_file)
 else:
-    st.info("⬆️ Upload an Excel file to begin.")
-    st.stop()
+    # Local Files
+    galderma_path = Path("Galderma_12-01-24_to_03-31-26.xlsx")
+    ams_path      = Path("DataForPythonAMS.xlsx")
 
-# ── Sidebar ──────────────────────────────────────────────────
+    if not is_ams and galderma_path.exists():
+        df, config = load_galderma(str(galderma_path))
+        st.info(f"📄 Usando archivo local: {galderma_path.name}  —  {len(df):,} filas")
+    elif is_ams and ams_path.exists():
+        result = load_ams(str(ams_path))
+        if result[0] is None:
+            st.error(result[1])
+            st.stop()
+        df, config = result
+        st.info(f"📄 Local File: {ams_path.name}  —  {len(df):,} filas")
+    else:
+        st.info("⬆️  Upload an Excel file to begin.")
+        st.stop()
+
+# ── Badge de modelo activo ───────────────────────────────────
+if is_ams:
+    st.markdown(
+        "🔵 **AMS MODEL** — LESS IS BEST (EFFORT) &nbsp;|&nbsp; "
+        f"Metric: `{config['metric_col']}`"
+    )
+else:
+    st.markdown(
+        "🟢 **GALDERMA MODEL** — MORE IS BEST (POINTS) &nbsp;|&nbsp; "
+        f"Metric: `{config['metric_col']}`"
+    )
+
+# ── Controls  ────────────────────────────────────────
 st.sidebar.header("Controls")
 
-DIMENSIONS = ["Developer", "QA Tester", "Grupo"]
-available  = [d for d in DIMENSIONS if d in df.columns]
-dimension  = st.sidebar.selectbox("Analyze by", available)
+dimension = st.sidebar.selectbox("Analyze by", config["dimensions"])
 
 df[dimension] = df[dimension].astype(str)
 values = sorted(df[dimension].dropna().unique().tolist())
 
-selected_values = st.sidebar.multiselect(
-    "Select values",
-    values,
-    default=values[:3] if len(values) >= 3 else values,
-)
+default_sel = values[:3] if len(values) >= 3 else values
+selected_values = st.sidebar.multiselect("Select values", values, default=default_sel)
 
 analysis_mode = st.sidebar.radio(
     "Analysis mode",
@@ -334,18 +438,22 @@ if not selected_values:
     st.warning("Select at least one value.")
     st.stop()
 
-# ── Agregación (paso 1) ────────────────────────────────
+# ── Agregación ────────────────────────────────────────────────
 df_filtered = df[df[dimension].isin(selected_values)].copy()
-db_agg = aggregate_monthly(df_filtered, dimension, "Points")
+db_agg = aggregate_monthly(df_filtered, dimension, config["metric_col"])
 db_agg[dimension] = db_agg[dimension].astype(str)
 
-# ── Productividad (paso 2) ─────────────────────────────
+# ── Productividad ─────────────────────────────────────────────
 if "Individual" in analysis_mode:
-    prod_df = calc_individual_productivity(db_agg, dimension, True, selected_values)
+    prod_df = calc_individual_productivity(
+        db_agg, dimension, config["more_is_best"], selected_values
+    )
 else:
-    prod_df = calc_global_productivity(db_agg, dimension, True, selected_values)
+    prod_df = calc_global_productivity(
+        db_agg, dimension, config["more_is_best"], selected_values
+    )
 
-# ── Gráficas ─────────────────────────────────────────────────
+# ── Gráficas ──────────────────────────────────────────────────
 if prod_df.empty:
     st.warning(
         f"⚠️ Not enough historical data to calculate productivity. "
@@ -358,25 +466,40 @@ else:
             "Positive = better than baseline  |  Negative = worse than baseline  |  "
             "Zero line = baseline level"
         )
-        st.plotly_chart(make_productivity_chart(prod_df, dimension), use_container_width=True)
+        st.plotly_chart(
+            make_productivity_chart(prod_df, dimension, config["label_real"], config["label_exp"]),
+            use_container_width=True,
+        )
 
     if "Velocity (Real vs Expected)" in show_charts:
         st.subheader("⚡ Velocity: Real vs Expected")
         st.caption(
-            "Real = sum of Points in current window  |  "
-            "Expected = what baseline EpU predicts for current volume"
+            f"{config['label_real']} = sum of {config['metric_col']} in current window  |  "
+            f"{config['label_exp']} = what baseline EpU predicts for current volume"
         )
-        st.plotly_chart(make_velocity_chart(prod_df, dimension, "Points"), use_container_width=True)
+        st.plotly_chart(
+            make_velocity_chart(
+                prod_df, dimension, config["metric_col"],
+                config["label_real"], config["label_exp"]
+            ),
+            use_container_width=True,
+        )
 
 if "Count over Time" in show_charts:
     st.subheader("🔢 Ticket Count Over Time")
-    st.plotly_chart(make_count_chart(db_agg, dimension, selected_values), use_container_width=True)
+    st.plotly_chart(
+        make_count_chart(db_agg, dimension, selected_values),
+        use_container_width=True,
+    )
 
 if "Mean over Time" in show_charts:
-    st.subheader("📊 Mean Points Over Time")
-    st.plotly_chart(make_mean_chart(db_agg, dimension, "Points", selected_values), use_container_width=True)
+    st.subheader(f"📊 Mean {config['metric_col']} Over Time")
+    st.plotly_chart(
+        make_mean_chart(db_agg, dimension, config["metric_col"], selected_values),
+        use_container_width=True,
+    )
 
-# ── Tablas (expanders) ───────────────────────────────
+# ── Tablas (expanders) ────────────────────────────────────────
 with st.expander("📋 Aggregated Monthly Data (db_agg)", expanded=False):
     st.dataframe(db_agg.sort_values(["Period", dimension]), use_container_width=True)
 
