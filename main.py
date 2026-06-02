@@ -75,7 +75,7 @@ def load_galderma(uploaded_file):
 def detect_columns(df: pd.DataFrame) -> dict:
     
     col_map = {
-        "Assigned To": None, "Group": None, "WBS": None,
+        "Assigned To": None, "IS": None, "Group": None, "WBS": None,
         "Category": None, "Service Type": None, "EndDate": None,
         "Effort": None, "Points": None, "Developer": None,
         "Status": None, "Period": None, "QA Tester": None,
@@ -83,8 +83,10 @@ def detect_columns(df: pd.DataFrame) -> dict:
     }
     for col in df.columns:
         c = col.lower().strip()
-        if   c in ["assigned to", "assignee", "resource", "is"]:  col_map["Assigned To"]  = col
+        if   c in ["assigned to", "assignee", "resource"]:         col_map["Assigned To"]  = col
+        elif c == "is":                                             col_map["IS"]           = col
         elif c == "group":                                          col_map["Group"]        = col
+        
         elif c == "wbs":                                            col_map["WBS"]          = col
         elif c == "category":                                       col_map["Category"]     = col
         elif c in ["service type", "servicetype"]:                  col_map["Service Type"] = col
@@ -125,7 +127,7 @@ def load_ams(uploaded_file):
     config = {
         "metric_col":   "Effort",
         "more_is_best": False,
-        "dimensions":   [c for c in ["Assigned To", "Group", "WBS", "Category", "Service Type"]
+        "dimensions":   [c for c in ["Assigned To", "IS", "Group", "WBS", "Category", "Service Type"]
                          if c in df.columns],
         "label_real":   "Real Effort",
         "label_exp":    "Expected Effort",
