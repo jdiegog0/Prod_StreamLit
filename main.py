@@ -31,6 +31,18 @@ st.title("📊 Productivity Analysis")
 
 
 # ════════════════════════════════════════════════════════════
+#  DIALOGS
+# ════════════════════════════════════════════════════════════
+@st.dialog("📖 Documentación", width="large")
+def show_docs():
+    readme_path = Path("README.md")
+    if readme_path.exists():
+        st.markdown(readme_path.read_text(encoding="utf-8"))
+    else:
+        st.warning("README.md no encontrado en el directorio raíz.")
+
+
+# ════════════════════════════════════════════════════════════
 #  DATA LOAD FOR GALDERMA MODEL (Points / More is Best)
 # ════════════════════════════════════════════════════════════
 def load_galderma(uploaded_file):
@@ -351,7 +363,6 @@ def make_velocity_chart(prod_df, dimension, metric_col, label_real, label_exp):
 #  UI PRINCIPAL
 # ════════════════════════════════════════════════════════════
 
-
 st.sidebar.header("⚙️ Model")
 model_choice = st.sidebar.radio(
     "Select productivity model",
@@ -369,6 +380,37 @@ uploaded_file = st.file_uploader(
     f"Upload {'AMS' if is_ams else 'Galderma'} Excel file (.xlsx)",
     type=["xlsx"],
 )
+
+# ── Documentación & Templates ──────────────────────────────
+st.sidebar.markdown("---")
+
+if st.sidebar.button("📖 Documentación", use_container_width=True):
+    show_docs()
+
+with st.sidebar.expander("📁 Templates"):
+    templates_dir = Path("Templates")
+    if templates_dir.exists():
+        templates = sorted(templates_dir.glob("*.xlsx"))
+        if templates:
+            for tpl in templates:
+                with open(tpl, "rb") as f:
+                    tpl_bytes = f.read()
+                st.download_button(
+                    label=f"⬇️ {tpl.name}",
+                    data=tpl_bytes,
+                    file_name=tpl.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_{tpl.stem}",
+                    use_container_width=True,
+                )
+        else:
+            st.info("No hay templates disponibles.")
+    else:
+        st.info("Carpeta Templates no encontrada.")
+
+# ── Footer ─────────────────────────────────────────────────
+st.sidebar.markdown("---")
+st.sidebar.caption("Desarrollado por Maritz Team")
 
 # ── Data Load ──────────────────────────────
 df, config = None, None
