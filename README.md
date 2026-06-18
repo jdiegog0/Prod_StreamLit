@@ -11,10 +11,7 @@ Aplicación interactiva construida con **Streamlit** para analizar la productivi
 
 # 🚀 Cómo ejecutar
 
-### Opción A — Ejecutable (usuarios no técnicos)
-Descarga `ProductivityAnalysis.exe`, haz doble clic. El navegador abre la app automáticamente.
-
-### Opción B — Línea de comandos
+### Opción A — Línea de comandos
 ```bash
 # Instalar dependencias
 pip install -r requirements.txt
@@ -32,7 +29,7 @@ plotly
 openpyxl
 ```
 
-### Opción C — Streamlit Cloud
+### Opción B — Streamlit Cloud
 ```
 https://appapp-evlye6wjacvnkpqqpnpyfe.streamlit.app/
 ```
